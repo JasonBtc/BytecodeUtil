@@ -4,8 +4,8 @@ plugins {
     id("kotlin")
 }
 
-group = properties["bcu.groupId"] as String
-version = properties["bcu.plugin.version"] as String
+group = providers.gradleProperty("bcu.groupId").get()
+version = providers.gradleProperty("bcu.plugin.version").get()
 
 java {
     sourceCompatibility = JavaVersion.VERSION_17

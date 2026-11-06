@@ -5,7 +5,6 @@ import java.util.concurrent.Executor
 
 plugins {
     id("com.android.application")
-    id("org.jetbrains.kotlin.android")
     id("bcu-plugin")
 }
 
@@ -38,7 +37,7 @@ ext["modifier.custom"] = "这是自定义的参数"
 
 android {
     namespace = "com.ysj.demo"
-    compileSdk = 33
+    compileSdk = 35
 
     defaultConfig {
         applicationId = "com.ysj.demo"
@@ -70,9 +69,6 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
-    }
-    kotlinOptions {
-        jvmTarget = "17"
     }
     buildFeatures {
         viewBinding = true
@@ -107,7 +103,7 @@ class CustomModifier(
         // 初始化阶段，可以通过 project 拿到所需的配置参数
         logger.lifecycle("step1：initialize. variant=${variant.name}")
         // 演示获取自定义参数
-        logger.lifecycle(project.properties["modifier.custom"].toString())
+        logger.lifecycle(project.findProperty("modifier.custom")?.toString().orEmpty())
     }
 
     override fun scan(classNode: ClassNode) {

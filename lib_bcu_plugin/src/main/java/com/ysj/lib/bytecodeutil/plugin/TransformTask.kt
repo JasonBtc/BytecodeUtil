@@ -5,14 +5,12 @@ import com.ysj.lib.bytecodeutil.plugin.api.IModifier
 import com.ysj.lib.bytecodeutil.plugin.api.logger.YLogger
 import org.gradle.api.DefaultTask
 import org.gradle.api.file.Directory
-import org.gradle.api.file.DirectoryProperty
 import org.gradle.api.file.RegularFile
 import org.gradle.api.file.RegularFileProperty
 import org.gradle.api.provider.ListProperty
 import org.gradle.api.provider.Property
 import org.gradle.api.tasks.InputFiles
 import org.gradle.api.tasks.Internal
-import org.gradle.api.tasks.OutputDirectory
 import org.gradle.api.tasks.OutputFile
 import org.gradle.api.tasks.TaskAction
 import org.objectweb.asm.ClassReader
@@ -50,9 +48,6 @@ abstract class TransformTask : DefaultTask() {
 
     @get:OutputFile
     abstract val transformOutput: RegularFileProperty
-
-    @get:OutputDirectory
-    abstract val notNeedOutput: DirectoryProperty
 
     @get:Internal
     abstract val variant: Property<Variant>
@@ -104,7 +99,6 @@ abstract class TransformTask : DefaultTask() {
         }
         logger.quiet(">>> total process time: $useTime ms")
         logger.quiet(">>> bcu transform output ${transformOutput.get().asFile}")
-        logger.quiet(">>> bcu not need output ${notNeedOutput.get().asFile}")
         logger.quiet("=================== transform end   ===================")
     }
 
@@ -118,12 +112,8 @@ abstract class TransformTask : DefaultTask() {
                 var startTime = System.currentTimeMillis()
 
                 // 扫描所有 class
-                val allNotNeedFileSet = HashSet<File>(128)
-                val items = scanAll(transform, allNotNeedFileSet, jos)
+                val items = scanAll(transform, jos)
                 logger.quiet(">>> bcu scan time: ${System.currentTimeMillis() - startTime} ms")
-
-                // 开始清理
-                val cleanWorker = cleanNotNeedOutput(transform.executor, allNotNeedFileSet)
 
                 // 处理所有字节码
                 startTime = System.currentTimeMillis()
@@ -135,50 +125,14 @@ abstract class TransformTask : DefaultTask() {
                 process(items, transform.executor, jos)
                 logger.quiet(">>> bcu transform output time: ${System.currentTimeMillis() - startTime} ms")
 
-                // 等待清理完成
-                if (cleanWorker != null) {
-                    startTime = System.currentTimeMillis()
-                    cleanWorker.await()
-                    logger.quiet(">>> bcu clean not need output time: ${System.currentTimeMillis() - startTime} ms")
-                }
             }
         }
     }
 
-    private fun cleanNotNeedOutput(executor: Executor, allNotNeedFileSet: Set<File>): Worker? {
-        val notNeedOutputDir = notNeedOutput.get().asFile
-        val list = notNeedOutputDir.listFiles() ?: return null
-        val workCounter: (File) -> Int = { if (it.isDirectory) 1 else 0 }
-        val worker = Worker(list.sumOf(workCounter), executor)
-        list.forEach { file ->
-            if (file.isFile) {
-                if (file !in allNotNeedFileSet) {
-                    file.delete()
-                    logger.lifecycle(">>> incremental removed: ${file.name}")
-                }
-                return@forEach
-            }
-            worker.submit {
-                file.walkBottomUp().forEach {
-                    if (it.isDirectory) {
-                        if (it.list().isNullOrEmpty()) {
-                            it.delete()
-                        }
-                    } else if (it !in allNotNeedFileSet) {
-                        it.delete()
-                        logger.lifecycle(">>> incremental removed: ${it.name}")
-                    }
-                }
-            }
-        }
-        return worker
-    }
-
-    private fun scanAll(transform: Transform, allNotNeedFileSet: MutableSet<File>, jos: JarOutputStream): LinkedList<ProcessItem> {
+    private fun scanAll(transform: Transform, jos: JarOutputStream): LinkedList<ProcessItem> {
         val needs = LinkedList<ProcessItem>()
         val jars = allJars.get()
         val dirs = allDirectories.get()
-        val notNeedOutputDir = notNeedOutput.get().asFile
         val worker = Worker(jars.size + dirs.size, transform.executor)
         // 处理 jar
         jars.forEach { rf ->
@@ -189,37 +143,14 @@ abstract class TransformTask : DefaultTask() {
                         if (!entry.name.endsWith(".class") || entry.name.endsWith("module-info.class")) {
                             return@entry
                         }
-                        val entryFile = File(notNeedOutputDir, "${entry.name}-crc${entry.crc.toString(16)}")
-                        if (entry.name.endsWith("/R.class")) {
-                            if (entryFile.isFile) {
-                                entryFile.delete()
-                            }
+                        if (entry.name.endsWith("/R.class") || transform.filterNot(entry.name)) {
                             val bytes = jf.getInputStream(entry).use { it.readBytes() }
                             synchronized(jos) {
-                                jos.putNextEntry(entry)
+                                jos.putNextEntry(JarEntry(entry.name))
                                 jos.write(bytes)
                                 jos.closeEntry()
                             }
-                        } else if (transform.filterNot(entry.name)) {
-                            if (!entryFile.isFile) {
-                                val parent = entryFile.parentFile
-                                if (!parent.isDirectory) {
-                                    parent.mkdirs()
-                                }
-                                entryFile.createNewFile()
-                                entryFile.outputStream().use { fos ->
-                                    jf.getInputStream(entry).use {
-                                        it.copyTo(fos)
-                                    }
-                                }
-                            }
-                            synchronized(allNotNeedFileSet) {
-                                allNotNeedFileSet.add(entryFile)
-                            }
                         } else {
-                            if (entryFile.isFile) {
-                                entryFile.delete()
-                            }
                             logger.verbose("process jar file --> ${entry.name}")
                             val item = jf
                                 .getInputStream(entry)

@@ -16,7 +16,7 @@ repositories {
 
 dependencies {
     implementation(gradleKotlinDsl())
-    implementation("com.android.tools.build:gradle-api:8.4.1")
+    implementation("com.android.tools.build:gradle-api:9.5.0")
     val properties = org.jetbrains.kotlin
         .konan.properties
         .loadProperties(File(rootDir, "../gradle.properties").absolutePath)
